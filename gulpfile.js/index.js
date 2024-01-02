@@ -1,126 +1,63 @@
-const { src, dest, parallel, watch } = require('gulp');
-const $ = require('./modules.js');
-const uglify = $.composer($.uglifyes, $.composer);
+const { src, dest, watch, series } = require('gulp');
+const gulp = require('gulp');
+const config = require('./settings/config.js');
+const $ = require('./settings/modules.js');
+const { createFolders } = require('./settings/functions.js');
+const {
+  scssCompress,
+  styleGuide,
+  styleGuideLoad,
+  EJScompile,
+  imgCompress,
+} = require('./tasks');
 
-const path = {
-  src: './src',
-  dist: './dist',
-};
-
-function html() {
-  return src([`${path.src}/pug/**/*.pug`, `!${path.src}/pug/**/_*.pug`])
-    .pipe(
-      $.plumber({
-        errorHandler: $.notify.onError('Error: <%= error.message %>'),
-      })
-    )
-    .pipe(
-      $.pug({
-        pretty: true,
-      })
-    )
-    .pipe(dest(`${path.src}/before_compression/html`))
-    .pipe(
-      $.minifyHTML({
-        collapseWhitespace: true,
-        removeComments: true,
-      })
-    )
-    .pipe(dest(path.dist))
-    .pipe(
-      $.browserSync.reload({
-        stream: true,
-        once: true,
-      })
-    );
+function init(done) {
+  createFolders(config.src_path.imgFolder, config.dest_path.css.min);
+  styleGuide();
+  scssCompress();
+  styleGuideLoad(done);
 }
 
-function css() {
-  return src(`${path.src}/scss/**/*.scss`, `${path.src}/scss/**/_*.scss`)
-    .pipe(
-      $.plumber({
-        errorHandler: $.notify.onError('Error: <%= error.message %>'),
-      })
-    )
-    .pipe($.sourcemaps.init())
-    .pipe($.sass())
-    .pipe($.autoprefixer())
-    .pipe($.sourcemaps.write())
-    .pipe(dest(`${path.src}/before_compression/css`))
-    .pipe(
-      $.rename({
-        suffix: '.min',
-      })
-    )
-    .pipe($.minifyCSS())
-    .pipe(dest(`${path.dist}/css`))
-    .pipe(
-      $.browserSync.reload({
-        stream: true,
-        once: true,
-      })
-    );
-}
-
-function js() {
-  return src(`${path.src}/js/**/*.js`, { sourcemaps: true })
-    .pipe(
-      $.plumber({
-        errorHandler: $.notify.onError('Error: <%= error.message %>'),
-      })
-    )
-    .pipe(
-      $.rename({
-        suffix: '.min',
-      })
-    )
-    .pipe(uglify())
-    .pipe(dest(`${path.dist}/js`, { sourcemaps: true }))
-    .pipe(
-      $.browserSync.reload({
-        stream: true,
-        once: true,
-      })
-    );
-}
-
-function img() {
-  return src(`${path.src}/images/**/**`)
-    .pipe($.changed(`${path.dist}/images/`))
-    .pipe(
-      $.imagemin([
-        $.pngquant({
-          quality: [0.6, 0.7],
-          speed: 1,
-        }),
-        $.mozjpeg({ quality: 85, progressive: true }),
-        $.imagemin.svgo(),
-        $.imagemin.optipng(),
-        $.imagemin.gifsicle({ optimizationLevel: 3 }),
-      ])
-    )
-    .pipe(dest(`${path.dist}/images/`));
-}
-
-function bs() {
-  $.browserSync.init({
-    server: {
-      baseDir: path.dist,
-    },
-    notify: true,
-    xip: false,
+function styleGuideSync() {
+  require('browser-sync').create('styleGuide').init({
+    host: 'localhost',
+    port: 8889,
+    ui: { port: 8889 },
+    mode: 'proxy',
+    proxy: `${process.env.LOCAL_URL}wp-content/themes/${process.env.THEME_NAME}/assets/styleGuide/`,
   });
 }
 
-exports.html = html;
-exports.css = css;
-exports.js = js;
-exports.bs = bs;
-exports.img = img;
+function watchFiles(done) {
+  gulp.watch(config.scss, scssCompress);
+  gulp.watch(config.src_path.img, imgCompress);
+  done();
+}
 
-exports.default = parallel([html, css, js, img, bs], () => {
-  watch(`${path.src}/pug/**`, html);
-  watch(`${path.src}/scss/**`, css);
-  watch(`${path.src}/js/**`, js);
-  watch(`${path.src}/images/**`, img);
-});
+function dev(done) {
+  $.browserSync.init({
+    host: 'localhost',
+    port: 8888,
+    mode: 'proxy',
+    files: ['../**/*.php', './**/*.js', '../**/*.html', './**/*.scss', './**/*.ejs'],
+    proxy: process.env.LOCAL_URL,
+  });
+
+  styleGuideSync();
+  gulp.watch(config.scss, scssCompress);
+  gulp.watch(['./**/*.ejs', '!./src/_*.ejs'], EJScompile);
+  gulp.watch(config.src_path.img, imgCompress);
+  done();
+}
+
+function styleGuideTask(done) {
+  styleGuideSync();
+  gulp.watch(config.scss, series(scssCompress, styleGuideLoad));
+  done();
+}
+
+exports.scss = series(init, watchFiles);
+
+exports.dev = series(init, dev);
+
+exports.styleGuide = series(init, styleGuideTask);
